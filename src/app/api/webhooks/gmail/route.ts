@@ -8,6 +8,7 @@ import {
 } from '@/lib/db/schema';
 import { eq, and } from 'drizzle-orm';
 import { triggerAgent } from '@/lib/agents/runner';
+import { emailProcessor } from '@/lib/services/email-processor';
 
 interface GmailPushNotification {
   message: {
@@ -47,6 +48,32 @@ export async function POST(req: Request) {
       return NextResponse.json({ status: 'no_account' });
     }
 
+    // Email Processing Pipeline
+    let processedEmails = [];
+    let processingError = null;
+
+    try {
+      // Check if Ollama is available
+      const ollamaAvailable = await emailProcessor.checkOllamaAvailability();
+
+      if (ollamaAvailable) {
+        // Process emails in background (non-blocking)
+        processedEmails = await emailProcessor.processFromWebhook(
+          historyId,
+          emailAddress
+        );
+        console.log(`Processed ${processedEmails.length} emails via Ollama`);
+      } else {
+        processingError = 'Ollama not available';
+        console.warn('Ollama unavailable, skipping email processing');
+      }
+    } catch (error: any) {
+      processingError = error.message;
+      console.error('Email processing error:', error);
+      // Don't fail the webhook - continue to agent triggering
+    }
+
+    // Existing Agent System
     const [gmailTool] = await db
       .select()
       .from(tools)
@@ -54,7 +81,13 @@ export async function POST(req: Request) {
       .limit(1);
 
     if (!gmailTool) {
-      return NextResponse.json({ status: 'no_gmail_tool' });
+      return NextResponse.json({
+        status: 'no_gmail_tool',
+        emailProcessing: {
+          processed: processedEmails.length,
+          error: processingError,
+        },
+      });
     }
 
     const agentAccounts = await db
@@ -88,6 +121,16 @@ export async function POST(req: Request) {
       status: 'processed',
       agentsTriggered: results.length,
       results,
+      emailProcessing: {
+        processed: processedEmails.length,
+        emails: processedEmails.map(e => ({
+          messageId: e.messageId,
+          summary: e.summary,
+          needsAction: e.needsAction,
+          actionableBy: e.actionableBy,
+        })),
+        error: processingError,
+      },
     });
   } catch (error: any) {
     console.error('Gmail webhook error:', error);

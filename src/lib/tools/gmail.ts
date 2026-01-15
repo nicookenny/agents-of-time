@@ -1,16 +1,10 @@
 import { tool } from 'ai';
 import { z } from 'zod';
-import { google } from 'googleapis';
 import { getToolContext } from './context';
+import { getGmailClient } from './gmail-helper';
 
 export interface GmailContext {
   accessToken: string;
-}
-
-async function getGmailClient(accessToken: string) {
-  const oauth2Client = new google.auth.OAuth2();
-  oauth2Client.setCredentials({ access_token: accessToken });
-  return google.gmail({ version: 'v1', auth: oauth2Client });
 }
 
 export const gmailTools = {
