@@ -48,6 +48,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        - DATABASE_URL=postgresql://agents:agents_local@postgres:5432/agents_of_life
     container_name: agents-app
     ports:
       - "3000:3000"

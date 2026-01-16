@@ -10,6 +10,10 @@ RUN npm ci
 FROM node:20-alpine AS builder
 WORKDIR /app
 
+# Accept DATABASE_URL as build arg
+ARG DATABASE_URL
+ENV DATABASE_URL=$DATABASE_URL
+
 # Copy package files and install all dependencies
 COPY package*.json ./
 RUN npm ci
@@ -19,6 +23,9 @@ COPY . .
 
 # Build Next.js app
 RUN npm run build
+
+# Run database migrations during build
+RUN npm run db:migrate
 
 # Stage 3: Runner
 FROM node:20-alpine AS runner

@@ -3,7 +3,7 @@ import { ollamaClient } from '@/lib/ai/ollama-client';
 import { db } from '@/lib/db/client';
 import { processedEmails, connectedAccounts, type ProcessedEmail } from '@/lib/db/schema';
 import { getGmailClient } from '@/lib/tools/gmail-helper';
-import { eq } from 'drizzle-orm';
+import { eq, and, sql } from 'drizzle-orm';
 
 // Zod schema for email analysis output
 export const EmailAnalysisSchema = z.object({
@@ -161,8 +161,31 @@ export class EmailProcessorService {
           .limit(1);
 
         if (existing.length > 0) {
-          console.log(`Email ${messageId} already processed, skipping`);
-          continue;
+          const email = existing[0];
+
+          // Skip if successfully processed (no error)
+          if (!email.processingError) {
+            console.log(`Email ${messageId} already processed successfully, skipping`);
+            continue;
+          }
+
+          // Throttle retries - wait 1 hour between attempts
+          const hoursSinceLastTry = (Date.now() - email.updatedAt.getTime()) / (1000 * 60 * 60);
+          if (hoursSinceLastTry < 1) {
+            console.log(
+              `Email ${messageId} failed recently, skipping retry (cooldown: ${Math.ceil(60 - hoursSinceLastTry * 60)} minutes)`
+            );
+            continue;
+          }
+
+          console.log(
+            `Email ${messageId} had error "${email.processingError}", retrying after ${Math.floor(hoursSinceLastTry)} hours...`
+          );
+
+          // Delete failed record so new attempt can be inserted
+          await db
+            .delete(processedEmails)
+            .where(eq(processedEmails.messageId, messageId));
         }
 
         // Fetch full email
