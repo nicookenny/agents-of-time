@@ -16,5 +16,57 @@ services:
       timeout: 5s
       retries: 5
 
+  ollama:
+    image: ollama/ollama:latest
+    container_name: agents-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  ollama-init:
+    image: ollama/ollama:latest
+    container_name: agents-ollama-init
+    depends_on:
+      ollama:
+        condition: service_healthy
+    volumes:
+      - ./scripts/init-ollama.sh:/init-ollama.sh
+    entrypoint: ["/bin/sh", "/init-ollama.sh"]
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+      - OLLAMA_EMAIL_MODEL=${OLLAMA_EMAIL_MODEL:-llama3.2:3b}
+    restart: "no"
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - DATABASE_URL=postgresql://agents:agents_local@postgres:5432/agents_of_life
+    container_name: agents-app
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ollama-init:
+        condition: service_completed_successfully
+    environment:
+      - DATABASE_URL=postgresql://agents:agents_local@postgres:5432/agents_of_life
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - OLLAMA_EMAIL_MODEL=${OLLAMA_EMAIL_MODEL:-llama3.2:3b}
+      - NODE_ENV=production
+    env_file:
+      - .env.local
+    restart: unless-stopped
+
 volumes:
   postgres_data:
+  ollama_data:

@@ -63,6 +63,8 @@ export const priorityLevelEnum = pgEnum('priority_level', [
   'urgent',
 ]);
 
+export const actionableByEnum = pgEnum('actionable_by', ['human', 'ai']);
+
 export const aiProviders = pgTable('ai_providers', {
   id: uuid('id').primaryKey().defaultRandom(),
   name: varchar('name', { length: 100 }).notNull().unique(),
@@ -386,6 +388,62 @@ export const eventLogs = pgTable(
   ]
 );
 
+export const processedEmails = pgTable(
+  'processed_emails',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+
+    // Email identifiers
+    messageId: varchar('message_id', { length: 255 }).notNull().unique(),
+    threadId: varchar('thread_id', { length: 255 }),
+    connectedAccountId: uuid('connected_account_id')
+      .notNull()
+      .references(() => connectedAccounts.id, { onDelete: 'cascade' }),
+
+    // Raw email data
+    sender: varchar('sender', { length: 500 }).notNull(),
+    subject: varchar('subject', { length: 1000 }),
+    receivedDate: timestamp('received_date', { withTimezone: true }).notNull(),
+    bodySnippet: text('body_snippet'),
+
+    // AI-extracted fields
+    summary: text('summary'),
+    actionables: jsonb('actionables').$type<string[]>(),
+    needsAction: boolean('needs_action').notNull().default(false),
+    actionableBy: actionableByEnum('actionable_by'),
+
+    // Additional AI insights
+    sentiment: varchar('sentiment', { length: 50 }),
+    category: varchar('category', { length: 100 }),
+    priority: priorityLevelEnum('priority').default('normal'),
+    keyEntities: jsonb('key_entities').$type<{
+      people?: string[];
+      organizations?: string[];
+      dates?: string[];
+      locations?: string[];
+    }>(),
+    suggestedLabels: text('suggested_labels').array(),
+
+    // Processing metadata
+    processedAt: timestamp('processed_at', { withTimezone: true }).notNull().defaultNow(),
+    processingTimeMs: integer('processing_time_ms'),
+    modelUsed: varchar('model_used', { length: 100 }),
+    processingError: text('processing_error'),
+
+    // Timestamps
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('processed_emails_message_idx').on(table.messageId),
+    index('processed_emails_account_idx').on(table.connectedAccountId),
+    index('processed_emails_needs_action_idx').on(table.needsAction),
+    index('processed_emails_actionable_by_idx').on(table.actionableBy),
+    index('processed_emails_received_idx').on(table.receivedDate),
+    index('processed_emails_processed_idx').on(table.processedAt),
+  ]
+);
+
 export const aiProvidersRelations = relations(aiProviders, ({ many }) => ({
   models: many(aiModels),
 }));
@@ -435,6 +493,7 @@ export const connectedAccountsRelations = relations(connectedAccounts, ({ one, m
     references: [oauthProviders.id],
   }),
   agentConnectedAccounts: many(agentConnectedAccounts),
+  processedEmails: many(processedEmails),
 }));
 
 export const agentsRelations = relations(agents, ({ one, many }) => ({
@@ -526,6 +585,13 @@ export const approvalLogsRelations = relations(approvalLogs, ({ one }) => ({
   }),
 }));
 
+export const processedEmailsRelations = relations(processedEmails, ({ one }) => ({
+  connectedAccount: one(connectedAccounts, {
+    fields: [processedEmails.connectedAccountId],
+    references: [connectedAccounts.id],
+  }),
+}));
+
 export type AiProvider = typeof aiProviders.$inferSelect;
 export type NewAiProvider = typeof aiProviders.$inferInsert;
 export type AiModel = typeof aiModels.$inferSelect;
@@ -556,3 +622,5 @@ export type ApprovalLog = typeof approvalLogs.$inferSelect;
 export type NewApprovalLog = typeof approvalLogs.$inferInsert;
 export type EventLog = typeof eventLogs.$inferSelect;
 export type NewEventLog = typeof eventLogs.$inferInsert;
+export type ProcessedEmail = typeof processedEmails.$inferSelect;
+export type NewProcessedEmail = typeof processedEmails.$inferInsert;
