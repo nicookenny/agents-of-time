@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db/client';
 import { agents, agentTools, aiModels, tools as toolsTable } from '@/lib/db/schema';
-import { eq, desc } from 'drizzle-orm';
+import { eq, desc, and } from 'drizzle-orm';
 import { z } from 'zod';
 import { selectBestModel, MODEL_CAPABILITIES } from '@/lib/ai/model-capabilities';
+import { getServerSession } from '@/lib/auth-helpers';
 
 const createAgentSchema = z.object({
   prompt: z.string().min(10),
@@ -16,6 +17,11 @@ const createAgentSchema = z.object({
 });
 
 export async function GET() {
+  const session = await getServerSession();
+  if (!session) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   const allAgents = await db
     .select({
       id: agents.id,
@@ -33,6 +39,7 @@ export async function GET() {
     })
     .from(agents)
     .leftJoin(aiModels, eq(agents.modelId, aiModels.id))
+    .where(eq(agents.userId, session.user.id))
     .orderBy(desc(agents.createdAt));
 
   const agentsWithTools = await Promise.all(
@@ -62,6 +69,11 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
+  const session = await getServerSession();
+  if (!session) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   const body = await req.json();
   const parsed = createAgentSchema.safeParse(body);
 
@@ -103,6 +115,7 @@ export async function POST(req: Request) {
   const [newAgent] = await db
     .insert(agents)
     .values({
+      userId: session.user.id,
       name: agentName,
       description: agentDescription,
       systemPrompt: agentSystemPrompt,

@@ -24,9 +24,6 @@ COPY . .
 # Build Next.js app
 RUN npm run build
 
-# Run database migrations during build
-RUN npm run db:migrate
-
 # Stage 3: Runner
 FROM node:20-alpine AS runner
 WORKDIR /app

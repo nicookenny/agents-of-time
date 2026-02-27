@@ -26,7 +26,7 @@ async function getUpcomingMeetings(
   const [calendarTool] = await db
     .select()
     .from(tools)
-    .where(eq(tools.identifier, 'google_calendar'))
+    .where(eq(tools.identifier, 'calendar'))
     .limit(1);
 
   if (!calendarTool) return [];
@@ -83,7 +83,7 @@ async function getAgentsForCalendarEvent(
   const [calendarTool] = await db
     .select()
     .from(tools)
-    .where(eq(tools.identifier, 'google_calendar'))
+    .where(eq(tools.identifier, 'calendar'))
     .limit(1);
 
   if (!calendarTool) return [];

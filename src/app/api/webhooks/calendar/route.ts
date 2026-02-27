@@ -36,7 +36,7 @@ export async function POST(req: Request) {
     const [calendarTool] = await db
       .select()
       .from(tools)
-      .where(eq(tools.identifier, 'google_calendar'))
+      .where(eq(tools.identifier, 'calendar'))
       .limit(1);
 
     if (!calendarTool) {

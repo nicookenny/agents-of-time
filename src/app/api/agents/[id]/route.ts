@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db/client';
 import { agents, agentTools, aiModels, tools as toolsTable } from '@/lib/db/schema';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { z } from 'zod';
+import { getServerSession } from '@/lib/auth-helpers';
 
 const updateAgentSchema = z.object({
   name: z.string().optional(),
@@ -18,6 +19,11 @@ export async function GET(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const session = await getServerSession();
+  if (!session) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   const { id } = await params;
 
   const [agent] = await db
@@ -40,7 +46,7 @@ export async function GET(
     })
     .from(agents)
     .leftJoin(aiModels, eq(agents.modelId, aiModels.id))
-    .where(eq(agents.id, id))
+    .where(and(eq(agents.id, id), eq(agents.userId, session.user.id)))
     .limit(1);
 
   if (!agent) {
@@ -64,6 +70,11 @@ export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const session = await getServerSession();
+  if (!session) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   const { id } = await params;
   const body = await req.json();
   const parsed = updateAgentSchema.safeParse(body);
@@ -75,7 +86,7 @@ export async function PATCH(
   const [existing] = await db
     .select()
     .from(agents)
-    .where(eq(agents.id, id))
+    .where(and(eq(agents.id, id), eq(agents.userId, session.user.id)))
     .limit(1);
 
   if (!existing) {
@@ -88,7 +99,7 @@ export async function PATCH(
       ...parsed.data,
       updatedAt: new Date(),
     })
-    .where(eq(agents.id, id))
+    .where(and(eq(agents.id, id), eq(agents.userId, session.user.id)))
     .returning();
 
   return NextResponse.json(updated);
@@ -98,19 +109,24 @@ export async function DELETE(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const session = await getServerSession();
+  if (!session) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   const { id } = await params;
 
   const [existing] = await db
     .select()
     .from(agents)
-    .where(eq(agents.id, id))
+    .where(and(eq(agents.id, id), eq(agents.userId, session.user.id)))
     .limit(1);
 
   if (!existing) {
     return NextResponse.json({ error: 'Agent not found' }, { status: 404 });
   }
 
-  await db.delete(agents).where(eq(agents.id, id));
+  await db.delete(agents).where(and(eq(agents.id, id), eq(agents.userId, session.user.id)));
 
   return NextResponse.json({ success: true, deletedId: id });
 }

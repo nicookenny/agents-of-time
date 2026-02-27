@@ -1,8 +1,10 @@
 import { CronJob } from 'cron';
 import { scanForProactiveActions, runScheduledAgents } from './proactive-scanner';
+import { emailPoller } from '@/lib/services/email-poller';
 
 let proactiveJob: CronJob | null = null;
 let scheduledJob: CronJob | null = null;
+let emailPollJob: CronJob | null = null;
 let isRunning = false;
 
 export function startScheduler() {
@@ -44,8 +46,27 @@ export function startScheduler() {
     'UTC'
   );
 
+  emailPollJob = new CronJob(
+    '* * * * *',
+    async () => {
+      try {
+        const result = await emailPoller.pollAllAccounts();
+        if (result.totalProcessed > 0 || result.totalAgents > 0) {
+          console.log(
+            `[Scheduler] Email poll complete: ${result.totalProcessed} emails processed, ${result.totalAgents} agents triggered`
+          );
+        }
+      } catch (err) {
+        console.error('[Scheduler] Email poll error:', err);
+      }
+    },
+    null,
+    true,
+    'UTC'
+  );
+
   isRunning = true;
-  console.log('[Scheduler] Started - Proactive scanner runs every 5 minutes, scheduled agents every minute');
+  console.log('[Scheduler] Started - Proactive scanner runs every 5 minutes, scheduled agents and email polling every minute');
 }
 
 export function stopScheduler() {
@@ -56,6 +77,10 @@ export function stopScheduler() {
   if (scheduledJob) {
     scheduledJob.stop();
     scheduledJob = null;
+  }
+  if (emailPollJob) {
+    emailPollJob.stop();
+    emailPollJob = null;
   }
   isRunning = false;
   console.log('[Scheduler] Stopped');

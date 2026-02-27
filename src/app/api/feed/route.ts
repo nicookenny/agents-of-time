@@ -2,8 +2,14 @@ import { NextResponse } from 'next/server';
 import { db } from '@/lib/db/client';
 import { feedItems, agents, agentRuns, agentActions } from '@/lib/db/schema';
 import { eq, desc, and, inArray } from 'drizzle-orm';
+import { getServerSession } from '@/lib/auth-helpers';
 
 export async function GET(req: Request) {
+  const session = await getServerSession();
+  if (!session) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   const url = new URL(req.url);
   const status = url.searchParams.get('status');
   const type = url.searchParams.get('type');
@@ -34,6 +40,7 @@ export async function GET(req: Request) {
     .from(feedItems)
     .leftJoin(agents, eq(feedItems.agentId, agents.id))
     .leftJoin(agentRuns, eq(feedItems.runId, agentRuns.id))
+    .where(eq(feedItems.userId, session.user.id))
     .orderBy(desc(feedItems.createdAt))
     .limit(limit)
     .offset(offset);
@@ -59,6 +66,11 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
+  const session = await getServerSession();
+  if (!session) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   const body = await req.json();
 
   const {
@@ -76,6 +88,7 @@ export async function POST(req: Request) {
   const [newItem] = await db
     .insert(feedItems)
     .values({
+      userId: session.user.id,
       agentId,
       runId,
       actionId,

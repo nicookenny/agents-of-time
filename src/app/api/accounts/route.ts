@@ -1,9 +1,15 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db/client';
 import { connectedAccounts, oauthProviders } from '@/lib/db/schema';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
+import { getServerSession } from '@/lib/auth-helpers';
 
 export async function GET() {
+  const session = await getServerSession();
+  if (!session) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   const accounts = await db
     .select({
       id: connectedAccounts.id,
@@ -20,7 +26,8 @@ export async function GET() {
       },
     })
     .from(connectedAccounts)
-    .leftJoin(oauthProviders, eq(connectedAccounts.providerId, oauthProviders.id));
+    .leftJoin(oauthProviders, eq(connectedAccounts.providerId, oauthProviders.id))
+    .where(eq(connectedAccounts.userId, session.user.id));
 
   const accountsWithStatus = accounts.map((acc) => {
     const needsReauth =

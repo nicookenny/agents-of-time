@@ -12,6 +12,7 @@ import {
   Trash2,
   Loader2,
   Zap,
+  MessageSquare,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -161,32 +162,39 @@ export default function AgentsPage() {
       {agents.length > 0 ? (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {agents.map((agent) => (
-            <Card key={agent.id} className="relative">
-              <CardHeader className="pb-3">
-                <div className="flex items-start justify-between">
-                  <div className="flex items-center gap-3">
-                    <Avatar className="h-10 w-10">
-                      <AvatarFallback
-                        className="text-sm font-medium text-white"
-                        style={{ backgroundColor: getAgentColor(agent.name) }}
-                      >
-                        {getAgentInitials(agent.name)}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div>
-                      <CardTitle className="text-base">{agent.name}</CardTitle>
-                      <p className="text-xs text-muted-foreground">
-                        {agent.model?.name || 'No model'}
-                      </p>
+            <Link key={agent.id} href={`/agents/${agent.id}`} className="block">
+              <Card className="relative cursor-pointer hover:bg-muted/50 transition-colors">
+                <CardHeader className="pb-3">
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-center gap-3">
+                      <Avatar className="h-10 w-10">
+                        <AvatarFallback
+                          className="text-sm font-medium text-white"
+                          style={{ backgroundColor: getAgentColor(agent.name) }}
+                        >
+                          {getAgentInitials(agent.name)}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div>
+                        <CardTitle className="text-base">{agent.name}</CardTitle>
+                        <p className="text-xs text-muted-foreground">
+                          {agent.model?.name || 'No model'}
+                        </p>
+                      </div>
                     </div>
-                  </div>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon" className="h-8 w-8">
-                        <MoreVertical className="h-4 w-4" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild onClick={(e) => e.preventDefault()}>
+                        <Button variant="ghost" size="icon" className="h-8 w-8">
+                          <MoreVertical className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" onClick={(e) => e.preventDefault()}>
+                      <DropdownMenuItem asChild>
+                        <Link href={`/agents/${agent.id}/chat`}>
+                          <MessageSquare className="mr-2 h-4 w-4" />
+                          Chat
+                        </Link>
+                      </DropdownMenuItem>
                       <DropdownMenuItem onClick={() => runAgent(agent.id)}>
                         <Zap className="mr-2 h-4 w-4" />
                         Run Now
@@ -250,7 +258,8 @@ export default function AgentsPage() {
                   <span>Last run: {formatLastRun(agent.lastRunAt)}</span>
                 </div>
               </CardContent>
-            </Card>
+              </Card>
+            </Link>
           ))}
         </div>
       ) : (

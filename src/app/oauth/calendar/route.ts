@@ -3,9 +3,16 @@ import { db } from '@/lib/db/client';
 import { connectedAccounts, oauthProviders } from '@/lib/db/schema';
 import { eq, and } from 'drizzle-orm';
 import { getTokensFromCode, getUserInfo, getRedirectUri } from '@/lib/oauth/google';
+import { getServerSession } from '@/lib/auth-helpers';
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
+
+  const session = await getServerSession();
+  if (!session) {
+    return NextResponse.redirect(new URL('/accounts?error=not_authenticated', url.origin));
+  }
+
   const code = url.searchParams.get('code');
   const error = url.searchParams.get('error');
 
@@ -44,8 +51,10 @@ export async function GET(req: Request) {
       .from(connectedAccounts)
       .where(
         and(
+          eq(connectedAccounts.userId, session.user.id),
           eq(connectedAccounts.providerId, googleProvider.id),
-          eq(connectedAccounts.accountIdentifier, userInfo.id!)
+          eq(connectedAccounts.accountIdentifier, userInfo.id!),
+          eq(connectedAccounts.serviceType, 'calendar')
         )
       )
       .limit(1);
@@ -76,8 +85,10 @@ export async function GET(req: Request) {
         .where(eq(connectedAccounts.id, existingAccount[0].id));
     } else {
       await db.insert(connectedAccounts).values({
+        userId: session.user.id,
         providerId: googleProvider.id,
         accountIdentifier: userInfo.id!,
+        serviceType: 'calendar',
         accountEmail: userInfo.email,
         accountName: userInfo.name,
         accessToken: tokens.access_token,

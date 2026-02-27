@@ -2,6 +2,7 @@ import { generateText, stepCountIs } from 'ai';
 import { anthropic } from '@ai-sdk/anthropic';
 import { openai } from '@ai-sdk/openai';
 import { db } from '@/lib/db/client';
+import { logger } from '@/lib/utils/logger';
 import {
   agents,
   agentTools,
@@ -10,18 +11,42 @@ import {
   feedItems,
   aiModels,
   tools as toolsTable,
-  connectedAccounts,
-  agentConnectedAccounts,
 } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
 import { getToolsByIdentifiers } from '@/lib/tools';
 import { setToolContext, clearToolContext } from '@/lib/tools/context';
 
+const BASE_SYSTEM_PROMPT = `## Important Guidelines
+
+### Communication Style
+- NEVER mention tool names, function names, or internal system details to the user
+- Speak naturally as if you're performing actions directly, not calling tools
+- Bad: "I'll use the listEmails function to retrieve your emails"
+- Good: "Let me check your recent emails"
+- Bad: "The createFlow tool returned an error"
+- Good: "I wasn't able to set up that automation"
+
+### Response Formatting
+- Keep responses concise and conversational
+- Don't use excessive markdown formatting or numbered lists unless truly helpful
+- Avoid step-by-step narration of your internal process
+- Present results naturally, as a helpful assistant would
+
+### Default Tools
+You have access to these tools that are always available:
+- getCurrentDate: Returns the current real date/time. ALWAYS call this FIRST when handling any request involving dates, times, scheduling, or relative time references (today, tomorrow, this week, next Monday, etc.). Trust the result - it is accurate.
+
+`;
+
 export type TriggerType = 'manual' | 'scheduled' | 'event' | 'webhook';
 
 export interface TriggerDetails {
   source?: string;
-  payload?: Record<string, unknown>;
+  payload?: Record<string, unknown> & {
+    flowId?: string;
+    flowName?: string;
+    actionDescription?: string;
+  };
   eventId?: string;
   historyId?: string;
   emailAddress?: string;
@@ -69,26 +94,7 @@ async function getAgentWithDetails(agentId: string) {
     .leftJoin(toolsTable, eq(agentTools.toolId, toolsTable.id))
     .where(eq(agentTools.agentId, agentId));
 
-  const agentAccounts = await db
-    .select({
-      accountId: agentConnectedAccounts.connectedAccountId,
-      toolId: agentConnectedAccounts.toolId,
-      accessToken: connectedAccounts.accessToken,
-      accountEmail: connectedAccounts.accountEmail,
-    })
-    .from(agentConnectedAccounts)
-    .leftJoin(
-      connectedAccounts,
-      eq(agentConnectedAccounts.connectedAccountId, connectedAccounts.id)
-    )
-    .where(eq(agentConnectedAccounts.agentId, agentId));
-
-  return {
-    agent,
-    model,
-    tools: agentToolsList,
-    accounts: agentAccounts,
-  };
+  return { agent, model, tools: agentToolsList };
 }
 
 function buildContextFromTrigger(
@@ -100,6 +106,12 @@ function buildContextFromTrigger(
       return 'This is a manual run. Please check for any pending tasks and report on the current state.';
 
     case 'scheduled':
+      if (triggerDetails.source === 'flow' && triggerDetails.payload?.actionDescription) {
+        return `This is a scheduled flow execution. Flow: "${triggerDetails.payload.flowName}".
+Your task: ${triggerDetails.payload.actionDescription}
+
+Execute this task now. Time: ${new Date().toISOString()}`;
+      }
       return `This is a scheduled run. Time: ${new Date().toISOString()}. ${
         triggerDetails.source === 'proactive_calendar'
           ? `There is an upcoming calendar event: ${JSON.stringify(triggerDetails.payload)}`
@@ -128,9 +140,17 @@ export async function triggerAgent(
   triggerType: TriggerType,
   triggerDetails: TriggerDetails = {}
 ) {
-  const { agent, model, tools, accounts } = await getAgentWithDetails(agentId);
+  const { agent, model, tools } = await getAgentWithDetails(agentId);
+
+  logger.info('Agent loaded', {
+    agentId,
+    name: agent.name,
+    toolCount: tools.length,
+    model: model?.modelIdentifier,
+  });
 
   if (!agent.isActive) {
+    logger.warn('Agent is not active', { agentId });
     return { success: false, error: 'Agent is not active' };
   }
 
@@ -146,24 +166,30 @@ export async function triggerAgent(
     .returning();
 
   const toolIdentifiers = tools.map((t) => t.identifier).filter(Boolean) as string[];
-  const aiTools = getToolsByIdentifiers(toolIdentifiers);
+  const aiTools = getToolsByIdentifiers(toolIdentifiers, true);
 
-  const toolContext: Record<string, unknown> = {};
-  for (const account of accounts) {
-    if (account.accessToken) {
-      toolContext.accessToken = account.accessToken;
-    }
-  }
-  setToolContext(toolContext);
+  logger.info('Setting tool context for agent run', {
+    agentId,
+    agentUserId: agent.userId,
+    hasUserId: !!agent.userId,
+  });
+  setToolContext({ agentId, userId: agent.userId });
 
   let actionSequence = 0;
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
 
+  logger.info('Starting agent execution', {
+    agentId,
+    runId: run.id,
+    triggerType,
+    toolIdentifiers,
+  });
+
   try {
     const result = await generateText({
       model: getModelProvider(model?.modelIdentifier || 'claude-sonnet-4-20250514'),
-      system: agent.systemPrompt,
+      system: BASE_SYSTEM_PROMPT + agent.systemPrompt,
       messages: [
         {
           role: 'user',
@@ -186,6 +212,14 @@ export async function triggerAgent(
             );
 
             const toolArgs = toolCall.args || toolCall.input || {};
+
+            logger.info('Tool call', {
+              agentId,
+              runId: run.id,
+              tool: toolCall.toolName,
+              status: toolResult ? 'success' : 'failed',
+              hasResult: !!toolResult?.result,
+            });
 
             const [action] = await db
               .insert(agentActions)
@@ -251,6 +285,13 @@ export async function triggerAgent(
       .set({ lastRunAt: new Date() })
       .where(eq(agents.id, agentId));
 
+    logger.info('Agent run completed', {
+      agentId,
+      runId: run.id,
+      inputTokens: totalInputTokens,
+      outputTokens: totalOutputTokens,
+    });
+
     clearToolContext();
     return {
       success: true,
@@ -262,6 +303,13 @@ export async function triggerAgent(
       },
     };
   } catch (error: any) {
+    logger.error('Agent run failed', {
+      agentId,
+      runId: run.id,
+      error: error.message,
+      stack: error.stack,
+    });
+
     clearToolContext();
     await db
       .update(agentRuns)

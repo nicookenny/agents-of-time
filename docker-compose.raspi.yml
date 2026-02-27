@@ -1,0 +1,127 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: agents-of-life-db
+    environment:
+      POSTGRES_USER: agents
+      POSTGRES_PASSWORD: agents_local
+      POSTGRES_DB: agents_of_life
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agents -d agents_of_life"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: agents-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  ollama-init:
+    image: ollama/ollama:latest
+    container_name: agents-ollama-init
+    depends_on:
+      ollama:
+        condition: service_healthy
+    volumes:
+      - ./scripts/init-ollama.sh:/init-ollama.sh
+    entrypoint: ["/bin/sh", "/init-ollama.sh"]
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+      - OLLAMA_EMAIL_MODEL=${OLLAMA_EMAIL_MODEL:-llama3.2:3b}
+    restart: "no"
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - DATABASE_URL=postgresql://agents:agents_local@postgres:5432/agents_of_life
+    container_name: agents-app
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ollama-init:
+        condition: service_completed_successfully
+    environment:
+      - DATABASE_URL=postgresql://agents:agents_local@postgres:5432/agents_of_life
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - OLLAMA_EMAIL_MODEL=${OLLAMA_EMAIL_MODEL:-llama3.2:3b}
+      - NODE_ENV=production
+    env_file:
+      - .env.local
+    restart: unless-stopped
+
+  trigger-postgres:
+    image: postgres:16-alpine
+    container_name: trigger-db
+    environment:
+      POSTGRES_USER: trigger
+      POSTGRES_PASSWORD: trigger_local
+      POSTGRES_DB: trigger
+    volumes:
+      - trigger_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trigger -d trigger"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  trigger-redis:
+    image: redis:7-alpine
+    container_name: trigger-redis
+    volumes:
+      - trigger_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  trigger-webapp:
+    image: ghcr.io/triggerdotdev/trigger.dev:latest
+    platform: linux/amd64
+    container_name: trigger-webapp
+    ports:
+      - "8030:3000"
+    depends_on:
+      trigger-postgres:
+        condition: service_healthy
+      trigger-redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://trigger:trigger_local@trigger-postgres:5432/trigger
+      DIRECT_URL: postgresql://trigger:trigger_local@trigger-postgres:5432/trigger
+      REDIS_HOST: trigger-redis
+      REDIS_PORT: 6379
+      MAGIC_LINK_SECRET: ${MAGIC_LINK_SECRET}
+      SESSION_SECRET: ${SESSION_SECRET}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      APP_ORIGIN: ${TRIGGER_APP_ORIGIN:-http://localhost:8030}
+      LOGIN_ORIGIN: ${TRIGGER_LOGIN_ORIGIN:-http://localhost:8030}
+      V3_ENABLED: "true"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  ollama_data:
+  trigger_postgres_data:
+  trigger_redis_data:

@@ -22,6 +22,52 @@ export const runStatusEnum = pgEnum('run_status', [
   'cancelled',
 ]);
 
+export const users = pgTable('users', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  name: text('name').notNull(),
+  email: text('email').notNull().unique(),
+  emailVerified: boolean('email_verified').default(false).notNull(),
+  image: text('image'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const sessions = pgTable('sessions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  token: text('token').notNull().unique(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  ipAddress: text('ip_address'),
+  userAgent: text('user_agent'),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+});
+
+export const authAccounts = pgTable('auth_accounts', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  accountId: text('account_id').notNull(),
+  providerId: text('provider_id').notNull(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  accessToken: text('access_token'),
+  refreshToken: text('refresh_token'),
+  idToken: text('id_token'),
+  accessTokenExpiresAt: timestamp('access_token_expires_at', { withTimezone: true }),
+  refreshTokenExpiresAt: timestamp('refresh_token_expires_at', { withTimezone: true }),
+  scope: text('scope'),
+  password: text('password'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const verifications = pgTable('verifications', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  identifier: text('identifier').notNull(),
+  value: text('value').notNull(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const triggerTypeEnum = pgEnum('trigger_type', [
   'scheduled',
   'manual',
@@ -54,6 +100,18 @@ export const feedItemStatusEnum = pgEnum('feed_item_status', [
   'rejected',
   'completed',
   'dismissed',
+]);
+
+export const messageRoleEnum = pgEnum('message_role', [
+  'user',
+  'assistant',
+  'tool',
+]);
+
+export const flowStatusEnum = pgEnum('flow_status', [
+  'active',
+  'paused',
+  'error',
 ]);
 
 export const priorityLevelEnum = pgEnum('priority_level', [
@@ -164,10 +222,12 @@ export const connectedAccounts = pgTable(
   'connected_accounts',
   {
     id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }),
     providerId: uuid('provider_id')
       .notNull()
       .references(() => oauthProviders.id, { onDelete: 'cascade' }),
     accountIdentifier: varchar('account_identifier', { length: 255 }).notNull(),
+    serviceType: text('service_type'),
     accountEmail: varchar('account_email', { length: 255 }),
     accountName: varchar('account_name', { length: 255 }),
     accessToken: text('access_token').notNull(),
@@ -175,17 +235,21 @@ export const connectedAccounts = pgTable(
     tokenExpiresAt: timestamp('token_expires_at', { withTimezone: true }),
     scopesGranted: text('scopes_granted').array(),
     isActive: boolean('is_active').notNull().default(true),
+    lastPolledAt: timestamp('last_polled_at', { withTimezone: true }),
+    lastPollError: text('last_poll_error'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    uniqueIndex('connected_accounts_provider_identifier_idx').on(
+    uniqueIndex('connected_accounts_provider_service_idx').on(
       table.providerId,
-      table.accountIdentifier
+      table.accountIdentifier,
+      table.serviceType
     ),
     index('connected_accounts_provider_idx').on(table.providerId),
     index('connected_accounts_active_idx').on(table.isActive),
     index('connected_accounts_expires_idx').on(table.tokenExpiresAt),
+    index('connected_accounts_service_idx').on(table.serviceType),
   ]
 );
 
@@ -193,6 +257,7 @@ export const agents = pgTable(
   'agents',
   {
     id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }),
     name: varchar('name', { length: 200 }).notNull(),
     description: text('description'),
     systemPrompt: text('system_prompt').notNull(),
@@ -317,6 +382,7 @@ export const feedItems = pgTable(
   'feed_items',
   {
     id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }),
     actionId: uuid('action_id').references(() => agentActions.id, {
       onDelete: 'set null',
     }),
@@ -444,6 +510,93 @@ export const processedEmails = pgTable(
   ]
 );
 
+export const chatConversations = pgTable(
+  'chat_conversations',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }),
+    agentId: uuid('agent_id')
+      .notNull()
+      .references(() => agents.id, { onDelete: 'cascade' }),
+    title: varchar('title', { length: 500 }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('chat_conversations_agent_idx').on(table.agentId),
+    index('chat_conversations_updated_idx').on(table.updatedAt),
+  ]
+);
+
+export const chatMessages = pgTable(
+  'chat_messages',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    conversationId: uuid('conversation_id')
+      .notNull()
+      .references(() => chatConversations.id, { onDelete: 'cascade' }),
+    role: messageRoleEnum('role').notNull(),
+    content: text('content'),
+    toolCalls: jsonb('tool_calls'),
+    toolResults: jsonb('tool_results'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('chat_messages_conversation_idx').on(table.conversationId),
+    index('chat_messages_created_idx').on(table.createdAt),
+  ]
+);
+
+export const flows = pgTable(
+  'flows',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }),
+    agentId: uuid('agent_id')
+      .notNull()
+      .references(() => agents.id, { onDelete: 'cascade' }),
+    name: varchar('name', { length: 200 }).notNull(),
+    description: text('description'),
+    schedule: varchar('schedule', { length: 100 }).notNull(),
+    actionDescription: text('action_description').notNull(),
+    status: flowStatusEnum('status').notNull().default('active'),
+    triggerJobId: varchar('trigger_job_id', { length: 255 }),
+    lastRunAt: timestamp('last_run_at', { withTimezone: true }),
+    nextRunAt: timestamp('next_run_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('flows_agent_idx').on(table.agentId),
+    index('flows_status_idx').on(table.status),
+    index('flows_next_run_idx').on(table.nextRunAt),
+  ]
+);
+
+export const usersRelations = relations(users, ({ one, many }) => ({
+  sessions: many(sessions),
+  authAccounts: many(authAccounts),
+  agents: many(agents),
+  connectedAccounts: many(connectedAccounts),
+  feedItems: many(feedItems),
+  conversations: many(chatConversations),
+  flows: many(flows),
+  settings: one(userSettings),
+}));
+
+export const sessionsRelations = relations(sessions, ({ one }) => ({
+  user: one(users, {
+    fields: [sessions.userId],
+    references: [users.id],
+  }),
+}));
+
+export const authAccountsRelations = relations(authAccounts, ({ one }) => ({
+  user: one(users, {
+    fields: [authAccounts.userId],
+    references: [users.id],
+  }),
+}));
+
 export const aiProvidersRelations = relations(aiProviders, ({ many }) => ({
   models: many(aiModels),
 }));
@@ -488,6 +641,10 @@ export const toolsRelations = relations(tools, ({ one, many }) => ({
 }));
 
 export const connectedAccountsRelations = relations(connectedAccounts, ({ one, many }) => ({
+  user: one(users, {
+    fields: [connectedAccounts.userId],
+    references: [users.id],
+  }),
   provider: one(oauthProviders, {
     fields: [connectedAccounts.providerId],
     references: [oauthProviders.id],
@@ -497,6 +654,10 @@ export const connectedAccountsRelations = relations(connectedAccounts, ({ one, m
 }));
 
 export const agentsRelations = relations(agents, ({ one, many }) => ({
+  user: one(users, {
+    fields: [agents.userId],
+    references: [users.id],
+  }),
   model: one(aiModels, {
     fields: [agents.modelId],
     references: [aiModels.id],
@@ -505,6 +666,8 @@ export const agentsRelations = relations(agents, ({ one, many }) => ({
   agentConnectedAccounts: many(agentConnectedAccounts),
   runs: many(agentRuns),
   feedItems: many(feedItems),
+  conversations: many(chatConversations),
+  flows: many(flows),
 }));
 
 export const agentToolsRelations = relations(agentTools, ({ one }) => ({
@@ -559,6 +722,10 @@ export const agentActionsRelations = relations(agentActions, ({ one, many }) => 
 }));
 
 export const feedItemsRelations = relations(feedItems, ({ one, many }) => ({
+  user: one(users, {
+    fields: [feedItems.userId],
+    references: [users.id],
+  }),
   action: one(agentActions, {
     fields: [feedItems.actionId],
     references: [agentActions.id],
@@ -592,6 +759,61 @@ export const processedEmailsRelations = relations(processedEmails, ({ one }) => 
   }),
 }));
 
+export const chatConversationsRelations = relations(chatConversations, ({ one, many }) => ({
+  user: one(users, {
+    fields: [chatConversations.userId],
+    references: [users.id],
+  }),
+  agent: one(agents, {
+    fields: [chatConversations.agentId],
+    references: [agents.id],
+  }),
+  messages: many(chatMessages),
+}));
+
+export const chatMessagesRelations = relations(chatMessages, ({ one }) => ({
+  conversation: one(chatConversations, {
+    fields: [chatMessages.conversationId],
+    references: [chatConversations.id],
+  }),
+}));
+
+export const flowsRelations = relations(flows, ({ one }) => ({
+  user: one(users, {
+    fields: [flows.userId],
+    references: [users.id],
+  }),
+  agent: one(agents, {
+    fields: [flows.agentId],
+    references: [agents.id],
+  }),
+}));
+
+export const userSettings = pgTable('user_settings', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().unique().references(() => users.id, { onDelete: 'cascade' }),
+  aiProvider: text('ai_provider').default('cloud'),
+  cloudModel: text('cloud_model').default('claude-3-5-haiku-20241022'),
+  ollamaModel: text('ollama_model').default('llama3.2:3b'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const userSettingsRelations = relations(userSettings, ({ one }) => ({
+  user: one(users, {
+    fields: [userSettings.userId],
+    references: [users.id],
+  }),
+}));
+
+export type User = typeof users.$inferSelect;
+export type NewUser = typeof users.$inferInsert;
+export type Session = typeof sessions.$inferSelect;
+export type NewSession = typeof sessions.$inferInsert;
+export type AuthAccount = typeof authAccounts.$inferSelect;
+export type NewAuthAccount = typeof authAccounts.$inferInsert;
+export type Verification = typeof verifications.$inferSelect;
+export type NewVerification = typeof verifications.$inferInsert;
 export type AiProvider = typeof aiProviders.$inferSelect;
 export type NewAiProvider = typeof aiProviders.$inferInsert;
 export type AiModel = typeof aiModels.$inferSelect;
@@ -624,3 +846,11 @@ export type EventLog = typeof eventLogs.$inferSelect;
 export type NewEventLog = typeof eventLogs.$inferInsert;
 export type ProcessedEmail = typeof processedEmails.$inferSelect;
 export type NewProcessedEmail = typeof processedEmails.$inferInsert;
+export type ChatConversation = typeof chatConversations.$inferSelect;
+export type NewChatConversation = typeof chatConversations.$inferInsert;
+export type ChatMessage = typeof chatMessages.$inferSelect;
+export type NewChatMessage = typeof chatMessages.$inferInsert;
+export type Flow = typeof flows.$inferSelect;
+export type NewFlow = typeof flows.$inferInsert;
+export type UserSettings = typeof userSettings.$inferSelect;
+export type NewUserSettings = typeof userSettings.$inferInsert;

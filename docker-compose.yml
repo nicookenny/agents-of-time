@@ -67,6 +67,58 @@ services:
       - .env.local
     restart: unless-stopped
 
+  trigger-postgres:
+    image: postgres:16-alpine
+    container_name: trigger-db
+    environment:
+      POSTGRES_USER: trigger
+      POSTGRES_PASSWORD: trigger_local
+      POSTGRES_DB: trigger
+    volumes:
+      - trigger_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trigger -d trigger"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  trigger-redis:
+    image: redis:7-alpine
+    container_name: trigger-redis
+    volumes:
+      - trigger_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  trigger-webapp:
+    image: ghcr.io/triggerdotdev/trigger.dev:latest
+    container_name: trigger-webapp
+    ports:
+      - "8030:3000"
+    depends_on:
+      trigger-postgres:
+        condition: service_healthy
+      trigger-redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://trigger:trigger_local@trigger-postgres:5432/trigger
+      DIRECT_URL: postgresql://trigger:trigger_local@trigger-postgres:5432/trigger
+      REDIS_HOST: trigger-redis
+      REDIS_PORT: 6379
+      REDIS_TLS_DISABLED: "true"
+      MAGIC_LINK_SECRET: ${MAGIC_LINK_SECRET}
+      SESSION_SECRET: ${SESSION_SECRET}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      APP_ORIGIN: http://localhost:8030
+      LOGIN_ORIGIN: http://localhost:8030
+      V3_ENABLED: "true"
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   ollama_data:
+  trigger_postgres_data:
+  trigger_redis_data:

@@ -2,14 +2,34 @@ import { tool } from 'ai';
 import { z } from 'zod';
 import { google } from 'googleapis';
 import { getToolContext } from './context';
+import { getUserOAuthToken } from './oauth-helper';
+import { logger } from '@/lib/utils/logger';
 
-export interface CalendarContext {
-  accessToken: string;
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
+
+export interface ToolContext {
+  userId: string;
 }
 
-async function getCalendarClient(accessToken: string) {
-  const oauth2Client = new google.auth.OAuth2();
-  oauth2Client.setCredentials({ access_token: accessToken });
+async function getCalendarClient(accessToken: string, refreshToken?: string) {
+  logger.info('Creating Calendar client', {
+    hasAccessToken: !!accessToken,
+    hasRefreshToken: !!refreshToken,
+    hasClientId: !!GOOGLE_CLIENT_ID,
+    hasClientSecret: !!GOOGLE_CLIENT_SECRET,
+  });
+
+  const oauth2Client = new google.auth.OAuth2(
+    GOOGLE_CLIENT_ID,
+    GOOGLE_CLIENT_SECRET
+  );
+  oauth2Client.setCredentials({
+    access_token: accessToken,
+    refresh_token: refreshToken,
+  });
+
+  logger.debug('Calendar OAuth2 client created', { tool: 'calendar' });
   return google.calendar({ version: 'v3', auth: oauth2Client });
 }
 
@@ -24,11 +44,19 @@ export const calendarTools = {
       query: z.string().optional().describe('Search query'),
     }),
     execute: async ({ calendarId, timeMin, timeMax, maxResults, query }) => {
-      const { accessToken } = getToolContext<CalendarContext>();
-      if (!accessToken) {
-        return { error: 'No Calendar access token available', events: [], total: 0 };
+      const { userId } = getToolContext<ToolContext>();
+      logger.info('Calendar tool invoked', { tool: 'listEvents', userId, hasContext: !!userId });
+      if (!userId) {
+        logger.warn('Calendar auth missing', { tool: 'listEvents' });
+        return { error: 'No user context available', events: [], total: 0 };
       }
-      const calendar = await getCalendarClient(accessToken);
+      const tokens = await getUserOAuthToken(userId, 'Google', 'calendar');
+      logger.debug('Calendar API call', { tool: 'listEvents', hasToken: !!tokens, query });
+      if (!tokens) {
+        logger.warn('Calendar auth missing', { tool: 'listEvents' });
+        return { error: 'No Calendar account connected', events: [], total: 0 };
+      }
+      const calendar = await getCalendarClient(tokens.accessToken, tokens.refreshToken ?? undefined);
 
       const now = new Date();
       const defaultTimeMin = timeMin || now.toISOString();
@@ -72,11 +100,19 @@ export const calendarTools = {
       eventId: z.string().describe('Event ID'),
     }),
     execute: async ({ calendarId, eventId }) => {
-      const { accessToken } = getToolContext<CalendarContext>();
-      if (!accessToken) {
-        return { error: 'No Calendar access token available' };
+      const { userId } = getToolContext<ToolContext>();
+      logger.info('Calendar tool invoked', { tool: 'getEvent', userId, hasContext: !!userId });
+      if (!userId) {
+        logger.warn('Calendar auth missing', { tool: 'getEvent' });
+        return { error: 'No user context available' };
       }
-      const calendar = await getCalendarClient(accessToken);
+      const tokens = await getUserOAuthToken(userId, 'Google', 'calendar');
+      logger.debug('Calendar API call', { tool: 'getEvent', hasToken: !!tokens, eventId });
+      if (!tokens) {
+        logger.warn('Calendar auth missing', { tool: 'getEvent' });
+        return { error: 'No Calendar account connected' };
+      }
+      const calendar = await getCalendarClient(tokens.accessToken, tokens.refreshToken ?? undefined);
 
       const response = await calendar.events.get({
         calendarId,
@@ -122,11 +158,19 @@ export const calendarTools = {
       attendees,
       sendNotifications,
     }) => {
-      const { accessToken } = getToolContext<CalendarContext>();
-      if (!accessToken) {
-        return { success: false, error: 'No Calendar access token available' };
+      const { userId } = getToolContext<ToolContext>();
+      logger.info('Calendar tool invoked', { tool: 'createEvent', userId, hasContext: !!userId });
+      if (!userId) {
+        logger.warn('Calendar auth missing', { tool: 'createEvent' });
+        return { success: false, error: 'No user context available' };
       }
-      const calendar = await getCalendarClient(accessToken);
+      const tokens = await getUserOAuthToken(userId, 'Google', 'calendar');
+      logger.debug('Calendar API call', { tool: 'createEvent', hasToken: !!tokens, summary });
+      if (!tokens) {
+        logger.warn('Calendar auth missing', { tool: 'createEvent' });
+        return { success: false, error: 'No Calendar account connected' };
+      }
+      const calendar = await getCalendarClient(tokens.accessToken, tokens.refreshToken ?? undefined);
 
       const response = await calendar.events.insert({
         calendarId,
@@ -172,11 +216,19 @@ export const calendarTools = {
       endDateTime,
       sendNotifications,
     }) => {
-      const { accessToken } = getToolContext<CalendarContext>();
-      if (!accessToken) {
-        return { success: false, error: 'No Calendar access token available' };
+      const { userId } = getToolContext<ToolContext>();
+      logger.info('Calendar tool invoked', { tool: 'updateEvent', userId, hasContext: !!userId });
+      if (!userId) {
+        logger.warn('Calendar auth missing', { tool: 'updateEvent' });
+        return { success: false, error: 'No user context available' };
       }
-      const calendar = await getCalendarClient(accessToken);
+      const tokens = await getUserOAuthToken(userId, 'Google', 'calendar');
+      logger.debug('Calendar API call', { tool: 'updateEvent', hasToken: !!tokens, eventId });
+      if (!tokens) {
+        logger.warn('Calendar auth missing', { tool: 'updateEvent' });
+        return { success: false, error: 'No Calendar account connected' };
+      }
+      const calendar = await getCalendarClient(tokens.accessToken, tokens.refreshToken ?? undefined);
 
       const existing = await calendar.events.get({ calendarId, eventId });
 
@@ -209,11 +261,19 @@ export const calendarTools = {
       sendNotifications: z.boolean().default(true),
     }),
     execute: async ({ calendarId, eventId, sendNotifications }) => {
-      const { accessToken } = getToolContext<CalendarContext>();
-      if (!accessToken) {
-        return { success: false, error: 'No Calendar access token available' };
+      const { userId } = getToolContext<ToolContext>();
+      logger.info('Calendar tool invoked', { tool: 'deleteEvent', userId, hasContext: !!userId });
+      if (!userId) {
+        logger.warn('Calendar auth missing', { tool: 'deleteEvent' });
+        return { success: false, error: 'No user context available' };
       }
-      const calendar = await getCalendarClient(accessToken);
+      const tokens = await getUserOAuthToken(userId, 'Google', 'calendar');
+      logger.debug('Calendar API call', { tool: 'deleteEvent', hasToken: !!tokens, eventId });
+      if (!tokens) {
+        logger.warn('Calendar auth missing', { tool: 'deleteEvent' });
+        return { success: false, error: 'No Calendar account connected' };
+      }
+      const calendar = await getCalendarClient(tokens.accessToken, tokens.refreshToken ?? undefined);
 
       await calendar.events.delete({
         calendarId,
@@ -232,11 +292,19 @@ export const calendarTools = {
       minutesAhead: z.number().default(60).describe('Look ahead time in minutes'),
     }),
     execute: async ({ calendarId, minutesAhead }) => {
-      const { accessToken } = getToolContext<CalendarContext>();
-      if (!accessToken) {
-        return { error: 'No Calendar access token available', events: [], timeRange: null };
+      const { userId } = getToolContext<ToolContext>();
+      logger.info('Calendar tool invoked', { tool: 'getUpcomingEvents', userId, hasContext: !!userId });
+      if (!userId) {
+        logger.warn('Calendar auth missing', { tool: 'getUpcomingEvents' });
+        return { error: 'No user context available', events: [], timeRange: null };
       }
-      const calendar = await getCalendarClient(accessToken);
+      const tokens = await getUserOAuthToken(userId, 'Google', 'calendar');
+      logger.debug('Calendar API call', { tool: 'getUpcomingEvents', hasToken: !!tokens, minutesAhead });
+      if (!tokens) {
+        logger.warn('Calendar auth missing', { tool: 'getUpcomingEvents' });
+        return { error: 'No Calendar account connected', events: [], timeRange: null };
+      }
+      const calendar = await getCalendarClient(tokens.accessToken, tokens.refreshToken ?? undefined);
 
       const now = new Date();
       const future = new Date(now.getTime() + minutesAhead * 60 * 1000);

@@ -205,7 +205,7 @@ async function seed() {
     {
       categoryId: calendarCat.id,
       name: 'Google Calendar',
-      identifier: 'google_calendar',
+      identifier: 'calendar',
       description: 'Manage calendar events and scheduling',
       configSchema: { type: 'object', properties: { calendarId: { type: 'string', default: 'primary' } } },
       requiresOauth: true,

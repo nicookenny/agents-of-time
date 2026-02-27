@@ -215,12 +215,12 @@ export class EmailProcessorService {
 
         const emailData: EmailData = {
           messageId,
-          threadId: message.data.threadId,
+          threadId: message.data.threadId ?? undefined,
           sender: getHeader('from'),
           subject: getHeader('subject'),
           date: getHeader('date'),
           body,
-          snippet: message.data.snippet,
+          snippet: message.data.snippet ?? undefined,
         };
 
         const result = await this.processEmail(emailData, account.id);
@@ -268,6 +268,62 @@ Always return valid JSON. Be concise but thorough. For actionable_by:
 - Use "human" for emails requiring decisions, approvals, personal responses, or subjective judgment
 - Use "ai" for routine tasks that can be automated (scheduling, data entry, simple replies)
 - Use "null" for informational emails with no action needed`;
+  }
+
+  async processEmailById(
+    messageId: string,
+    accessToken: string,
+    connectedAccountId: string
+  ): Promise<ProcessedEmail> {
+    const existing = await db
+      .select()
+      .from(processedEmails)
+      .where(eq(processedEmails.messageId, messageId))
+      .limit(1);
+
+    if (existing.length > 0 && !existing[0].processingError) {
+      return existing[0];
+    }
+
+    if (existing.length > 0) {
+      await db.delete(processedEmails).where(eq(processedEmails.messageId, messageId));
+    }
+
+    const gmail = await getGmailClient(accessToken);
+    const message = await gmail.users.messages.get({
+      userId: 'me',
+      id: messageId,
+      format: 'full',
+    });
+
+    const headers = message.data.payload?.headers || [];
+    const getHeader = (name: string) =>
+      headers.find(h => h.name?.toLowerCase() === name.toLowerCase())?.value || '';
+
+    let body = '';
+    const payload = message.data.payload;
+    if (payload?.body?.data) {
+      body = Buffer.from(payload.body.data, 'base64').toString('utf-8');
+    } else if (payload?.parts) {
+      const textPart = payload.parts.find(
+        p => p.mimeType === 'text/plain' || p.mimeType === 'text/html'
+      );
+      if (textPart?.body?.data) {
+        body = Buffer.from(textPart.body.data, 'base64').toString('utf-8');
+      }
+    }
+
+    const emailData: EmailData = {
+      messageId,
+      threadId: message.data.threadId ?? undefined,
+      sender: getHeader('from'),
+      subject: getHeader('subject'),
+      date: getHeader('date'),
+      body,
+      snippet: message.data.snippet ?? undefined,
+    };
+
+    return this.processEmail(emailData, connectedAccountId);
   }
 
   async checkOllamaAvailability(): Promise<boolean> {
